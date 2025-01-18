@@ -11,18 +11,16 @@ import NatsC
 public class NatsSwiftWrapper {
     private var optsPtr: UnsafeMutablePointer<natsOptions>?
     private var connPtr: UnsafeMutablePointer<natsConnection>?
-
     public private(set) var isConnected = false
 
-    public init() {
-        // lazy creation of natsOptions in connectWithNKey
-    }
+    public init() { }
 
     deinit {
         close()
     }
 
-    /// Connect to NATS with public key + seed, specifying a URL. Calls completion with true/false.
+    // Connect to NATS with public key + seed, specifying a URL. Calls completion with true/false.
+    // If connection fails, we also fetch a detailed error string via nats_GetLastError.
     public func connectWithNKey(
         publicKey: String,
         seedContent: String,
@@ -37,10 +35,10 @@ public class NatsSwiftWrapper {
                 completion(false)
                 return
             }
-            self.optsPtr = validOpts
+            optsPtr = validOpts
         }
 
-        guard let opts = self.optsPtr else {
+        guard let opts = optsPtr else {
             print("optsPtr is nil, cannot proceed.")
             completion(false)
             return
@@ -64,26 +62,21 @@ public class NatsSwiftWrapper {
 
         var tempConn: UnsafeMutablePointer<natsConnection>?
         let connStatus = natsConnection_Connect(&tempConn, opts)
+
         if connStatus == NATS_OK, let validConn = tempConn {
             connPtr = validConn
             isConnected = true
             completion(true)
         } else {
             isConnected = false
-            var lastErrCode: Int32 = 0
-    var errPtr: UnsafeMutablePointer<CChar>?
-    nats_GetLastError(&lastErrCode, &errPtr)
-    if let errPtr = errPtr {
-        let errStr = String(cString: errPtr)
-        print("Failed to connect: \(errStr) [error code: \(lastErrCode)]")
-    } else {
-        print("Failed to connect: Unknown error")
-    }
+            print("Connection failed: \(statusString(connStatus))")
+            fetchLastErrorDetails()
             completion(false)
         }
     }
 
-    /// Publish a message (String) to a subject, with a success callback.
+    // Publish a message (String) to a subject, with a success callback.
+    // If not connected, we call completion(false) immediately.
     public func publish(
         subject: String,
         message: String,
@@ -118,12 +111,24 @@ public class NatsSwiftWrapper {
         isConnected = false
     }
 
-    /// Converts a natsStatus code to a human-readable string.
+    /// Convert a natsStatus code to a human-readable string
     private func statusString(_ status: natsStatus) -> String {
         guard let cStr = natsStatus_GetText(status) else {
             return "Unknown NATS error code \(status.rawValue)"
         }
         return String(cString: cStr)
+    }
+
+    /// Fetch and print the most recent detailed error info from the NATS library
+    private func fetchLastErrorDetails() {
+        var lastCode: natsStatus = NATS_OK
+        let errPtr = nats_GetLastError(&lastCode)
+        if let errPtr = errPtr {
+            let errStr = String(cString: errPtr)
+            print("nats_GetLastError -> code: \(lastCode), message: \"\(errStr)\"")
+        } else {
+            print("nats_GetLastError returned no error message. code=\(lastCode)")
+        }
     }
 }
 
