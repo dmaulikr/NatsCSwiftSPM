@@ -70,7 +70,15 @@ public class NatsSwiftWrapper {
             completion(true)
         } else {
             isConnected = false
-            print("Failed to connect: \(statusString(connStatus))")
+            var lastErrCode: Int32 = 0
+    var errPtr: UnsafeMutablePointer<CChar>?
+    nats_GetLastError(&lastErrCode, &errPtr)
+    if let errPtr = errPtr {
+        let errStr = String(cString: errPtr)
+        print("Failed to connect: \(errStr) [error code: \(lastErrCode)]")
+    } else {
+        print("Failed to connect: Unknown error")
+    }
             completion(false)
         }
     }
