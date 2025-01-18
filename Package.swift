@@ -7,85 +7,41 @@
 
 // swift-tools-version:6.0
 import PackageDescription
-import Foundation   // for environment checks if you want them
 
-// ----------------------------------------------------
-// 1) Decide if you want libevent or libuv by default.
-//    For example, let's say we enable libevent, disable libuv:
-// ----------------------------------------------------
-let envUseLibEvent = ProcessInfo.processInfo.environment["USE_LIBEVENT"] == "1"
-let envUseLibUV    = ProcessInfo.processInfo.environment["USE_LIBUV"] == "1"
-
-// Construct your CSettings array:
-var natsCCSettings: [CSetting] = [
-    .unsafeFlags(["-I/opt/homebrew/include"])  // So we can find <event.h> or <uv.h>
-]
-
-// If you want to define NATS_HAS_LIBEVENT=1 or 0 based on your boolean:
-if envUseLibEvent {
-    natsCCSettings.append(.define("NATS_HAS_LIBEVENT", to: "1"))
-} else {
-    natsCCSettings.append(.define("NATS_HAS_LIBEVENT", to: "0"))
-}
-
-// Similarly for libuv:
-if envUseLibUV {
-    natsCCSettings.append(.define("NATS_HAS_LIBUV", to: "1"))
-} else {
-    natsCCSettings.append(.define("NATS_HAS_LIBUV", to: "0"))
-}
-
-// ----------------------------------------------------
-// 2) Set up the library linking array
-// ----------------------------------------------------
-var natsLinkerSettings: [LinkerSetting] = []
-
-if envUseLibEvent {
-    // Link libevent
-    natsLinkerSettings.append(.linkedLibrary("event"))
-    // If you need event_core or event_extra, you can add them too:
-    // natsLinkerSettings.append(.linkedLibrary("event_core"))
-    // natsLinkerSettings.append(.linkedLibrary("event_extra"))
-}
-
-if envUseLibUV {
-    // Link libuv
-    natsLinkerSettings.append(.linkedLibrary("uv"))
-}
-
-// ----------------------------------------------------
-// 3) Define the Swift Package
-// ----------------------------------------------------
 let package = Package(
     name: "NatsCSwift",
     products: [
-        // The Swift library others can `import NatsCSwift` from
+        // The public library, so you can `import NatsCSwift` in other projects.
         .library(
             name: "NatsCSwift",
             targets: ["NatsSwift"]
         )
     ],
     targets: [
-        // C target: nats.c sources
+        // The C target that compiles nats.c, conn.c, etc.
+        // `publicHeadersPath: "include"` means Swift sees only the headers under `Sources/NatsC/include/`.
         .target(
             name: "NatsC",
             path: "Sources/NatsC",
-            // Where SwiftPM expects public headers for the module
             publicHeadersPath: "include",
-            cSettings: natsCCSettings,        // The array we built above
-            linkerSettings: natsLinkerSettings
+            cSettings: [
+                // Explicitly disable libevent and libuv references:
+                .define("NATS_HAS_LIBEVENT", to: "0"),
+                .define("NATS_HAS_LIBUV", to: "0")
+            ],
+            linkerSettings: [
+                // No linking to libevent or libuv
+            ]
         ),
-        // Swift target that wraps NatsC
+
+        // The Swift wrapper target that depends on NatsC
         .target(
             name: "NatsSwift",
             dependencies: ["NatsC"],
-            path: "Sources/NatsSwift",
-            // Swift’s Clang importer also needs -I/opt/homebrew/include:
-            cSettings: [
-                .unsafeFlags(["-I/opt/homebrew/include"])
-            ]
+            path: "Sources/NatsSwift"
         ),
-        // Test target
+
+        // (Optional) Test target for your unit tests
         .testTarget(
             name: "NatsCSwiftTests",
             dependencies: ["NatsSwift"],

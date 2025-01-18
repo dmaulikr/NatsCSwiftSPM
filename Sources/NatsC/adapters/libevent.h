@@ -23,7 +23,7 @@ extern "C" {
  */
 #include <event.h>
 #include <event2/thread.h>
-#include "nats.h"
+#include "../include/nats/nats.h"
 
 typedef struct
 {
