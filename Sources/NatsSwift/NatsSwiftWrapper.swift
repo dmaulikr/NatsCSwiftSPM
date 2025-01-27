@@ -11,6 +11,8 @@ import NatsC
 public class NatsSwiftWrapper {
     private var optsPtr: UnsafeMutablePointer<natsOptions>?
     private var connPtr: UnsafeMutablePointer<natsConnection>?
+    private var subscriptionPtr: UnsafeMutablePointer<natsSubscription>?
+    private var subscriptionHandler: ((String) -> Void)?
     public private(set) var isConnected = false
 
     public init() { }
@@ -130,9 +132,77 @@ public class NatsSwiftWrapper {
             print("nats_GetLastError returned no error message. code=\(lastCode)")
         }
     }
-}
+    
+    /// Fetch messages from event
+    private static let cMsgCallback: natsMsgHandler = { (ncPtr, subPtr, msgPtr, userData) in
+        guard let userData = userData else { return }
+        let mySelf = Unmanaged<NatsSwiftWrapper>.fromOpaque(userData).takeUnretainedValue()
+        guard let msgPtr = msgPtr else { return }
 
-public struct NatsError: Error {
-    public let message: String
-    public init(_ message: String) { self.message = message }
+        let subjectCStr = natsMsg_GetSubject(msgPtr)
+        let subject = subjectCStr.map { String(cString: $0) } ?? "(unknown)"
+
+        let dataPtr = natsMsg_GetData(msgPtr) // UnsafePointer<CChar>
+        let dataLen = natsMsg_GetDataLength(msgPtr) // Int32
+        var messageString: String = ""
+
+        if let dataPtr = dataPtr, dataLen > 0 {
+            // Convert dataLen to Int
+            let length = Int(dataLen)
+            // Rebind Int8 pointer to UInt8
+            dataPtr.withMemoryRebound(to: UInt8.self, capacity: length) { bytesPtr in
+                let buffer = UnsafeBufferPointer(start: bytesPtr, count: length)
+                messageString = String(decoding: buffer, as: UTF8.self)
+            }
+        } else {
+            messageString = ""
+        }
+
+        if let handler = mySelf.subscriptionHandler {
+            handler("Subject: \(subject)\nMessage: \(messageString)")
+        }
+    }
+    
+    public func subscribe(
+        to subject: String,
+        handler: @escaping (String) -> Void,
+        completion: @escaping (Bool) -> Void
+    ) {
+        guard isConnected, let conn = connPtr else {
+            print("Not connected, cannot subscribe.")
+            completion(false)
+            return
+        }
+
+        // If there's already a subscription, unsubscribe first (optional if you only allow one)
+        if let existingSub = subscriptionPtr {
+            natsSubscription_Unsubscribe(existingSub)
+            subscriptionPtr = nil
+        }
+
+        // Store the Swift closure
+        subscriptionHandler = handler
+
+        // We'll pass 'self' via userData so we can retrieve in cMsgCallback
+        let userData = Unmanaged.passUnretained(self).toOpaque()
+
+        var subPtr: UnsafeMutablePointer<natsSubscription>?
+        let subStatus = natsConnection_Subscribe(
+            &subPtr,
+            conn,
+            subject,
+            Self.cMsgCallback,
+            userData
+        )
+        if subStatus == NATS_OK, let validSub = subPtr {
+            subscriptionPtr = validSub
+            print("Subscribed to \(subject) successfully.")
+            completion(true)
+        } else {
+            print("Failed to subscribe to \(subject): \(statusString(subStatus))")
+            fetchLastErrorDetails()
+            completion(false)
+        }
+    }
+    
 }
